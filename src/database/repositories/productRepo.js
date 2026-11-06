@@ -49,7 +49,7 @@ const updateCategorySortOrder = async (id, sortOrder) => {
 const getProductsByCategory = async (categoryId, isAdmin = false) => {
     let query = supabase
         .from('products')
-        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options');
+        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options, stock, allowed_payment_methods');
     
     if (categoryId === null || categoryId === 'none') {
         query = query.is('category_id', null);
@@ -66,7 +66,7 @@ const getProductsByCategory = async (categoryId, isAdmin = false) => {
 const getProductsBySubcategory = async (subcategoryId, isAdmin = false) => {
     let query = supabase
         .from('products')
-        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options')
+        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options, stock, allowed_payment_methods')
         .eq('subcategory_id', subcategoryId);
     if (!isAdmin) query = query.eq('is_active', true);
 
@@ -127,7 +127,21 @@ const getProductByName = async (name) => {
 };
 
 const addProduct = async (productData) => {
-    const { categoryId, subcategoryId, name, description, price, isUnitPrice, fileId, deliveryOption, kycMode, kycOptions } = productData;
+    const categoryId = productData.categoryId || productData.category_id || null;
+    const subcategoryId = productData.subcategoryId || productData.subcategory_id || null;
+    const name = productData.name;
+    const description = productData.description;
+    const price = productData.price;
+    const isUnitPrice = productData.isUnitPrice !== undefined ? productData.isUnitPrice : (productData.is_unit_price !== undefined ? productData.is_unit_price : false);
+    const fileId = productData.fileId || productData.image_url || null;
+    const deliveryOption = productData.deliveryOption || productData.delivery_option || 'none';
+    const kycMode = productData.kycMode || productData.kyc_mode || 'none';
+    const kycOptions = productData.kycOptions || productData.kyc_options || [];
+    const stockVal = productData.stock !== undefined ? productData.stock : 0;
+    const initialStock = Math.max(0, parseInt(stockVal, 10) || 0);
+    const allowedPaymentMethods = productData.allowedPaymentMethods || productData.allowed_payment_methods || [];
+    const isOutOfStock = (deliveryOption && deliveryOption !== 'none') ? (initialStock <= 0) : false;
+
     const { data, error } = await supabase
         .from('products')
         .insert([{
@@ -141,12 +155,19 @@ const addProduct = async (productData) => {
             delivery_option: deliveryOption || 'none',
             kyc_mode: kycMode || 'none',
             kyc_options: kycOptions || [],
+            stock: initialStock,
+            allowed_payment_methods: allowedPaymentMethods || [],
             is_active: true, 
-            is_out_of_stock: false, 
+            is_out_of_stock: isOutOfStock, 
             sort_order: 0
         }])
-        .select('id');
+        .select('*');
     if (error) throw error;
+    if (data && Array.isArray(data) && data[0]) {
+        const res = data[0];
+        res[0] = data[0]; // backward compatibility for callers expecting result[0].id
+        return res;
+    }
     return data;
 };
 
@@ -223,10 +244,33 @@ const updateProductDescription = async (productId, description) => {
     return data[0];
 };
 
+const updateProductStock = async (productId, stock) => {
+    const stockNum = Math.max(0, parseInt(stock, 10) || 0);
+    const isOut = stockNum === 0;
+    const { data, error } = await supabase
+        .from('products')
+        .update({ stock: stockNum, is_out_of_stock: isOut })
+        .eq('id', productId)
+        .select('id, stock, is_out_of_stock');
+    if (error) throw error;
+    return data ? data[0] : null;
+};
+
+const updateProductAllowedPaymentMethods = async (productId, methodsArray) => {
+    const arr = Array.isArray(methodsArray) ? methodsArray : [];
+    const { data, error } = await supabase
+        .from('products')
+        .update({ allowed_payment_methods: arr })
+        .eq('id', productId)
+        .select('id, allowed_payment_methods');
+    if (error) throw error;
+    return data ? data[0] : null;
+};
+
 const getAllProducts = async (isAdmin = false) => {
     let query = supabase
         .from('products')
-        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options')
+        .select('id, name, price, is_active, is_out_of_stock, category_id, subcategory_id, delivery_option, sort_order, image_url, kyc_mode, kyc_options, stock, allowed_payment_methods')
         .order('name', { ascending: true });
     
     if (!isAdmin) query = query.eq('is_active', true);
@@ -242,5 +286,5 @@ module.exports = {
     getProductById, getProductByName, addProduct, deleteProduct, getAllProducts,
     toggleProductStatus, updateProductCategory, updateProductImage, updateProductPrice,
     updateProductName, updateProductSortOrder, setDeliveryOption, updateProductDescription,
-    setProductKyc
+    setProductKyc, updateProductStock, updateProductAllowedPaymentMethods
 };

@@ -111,6 +111,7 @@ module.exports = (bot) => {
                     [{ text: statusBtnLabel, callback_data: 'master_shop_status_hub', style: 'primary' }],
                     [{ text: '👥 Personal & Admins', callback_data: 'master_manage_admins', style: 'primary' }],
                     [{ text: '💳 Zahlungsarten verwalten', callback_data: 'master_manage_payments', style: 'primary' }],
+                    [{ text: '🚚 Versandmethoden verwalten', callback_data: 'master_manage_shipping', style: 'primary' }],
                     [{ text: showExactStock ? '📦 Vorrats-Anzeige: Exakte Stückzahl' : '📦 Vorrats-Anzeige: Allgemein (Verfügbar)', callback_data: 'master_toggle_stock_vis', style: 'primary' }],
                     [{ text: '⏳ Ausstehende Freigaben', callback_data: 'master_pending_approvals', style: 'primary' }],
                     [{ text: '📝 Begrüßungstext bearbeiten', callback_data: 'master_edit_welcome_msg', style: 'primary' }],
@@ -269,7 +270,7 @@ module.exports = (bot) => {
                 let text = `💵 *${method.name}*\n\n`;
                 text += `📌 *Typ:* Barzahlung (Physische Artikel)\n`;
                 text += `ℹ️ *Status:* Aktiv ✅\n`;
-                text += `🚫 *Krypto-Sperre:* Bei physischen Artikeln wird Krypto automatisch ausgeblendet.\n`;
+                text += `💡 *Info:* Für Barzahlung bei Abholung / Vor-Ort Übergabe physischer Artikel.\n`;
                 if (method.wallet_address) {
                     text += `\n📝 *Kundenhinweis / Instruktion:*\n${method.wallet_address}\n`;
                 }
@@ -299,6 +300,141 @@ module.exports = (bot) => {
         } catch (error) { 
             console.error(error.message); 
         }
+    });
+
+    // ─── VERSANDMETHODEN VERWALTEN (MASTER) ──────────────────────────────────
+    bot.action('master_manage_shipping', isMasterAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            const methods = await shippingRepo.getAllShippingMethods(true);
+
+            const keyboard = methods.map(m => {
+                const statusBadge = m.is_active ? '✅' : '👻';
+                return [{
+                    text: `${statusBadge} 🚚 ${m.name} (${formatters.formatPrice(m.cost)})`,
+                    callback_data: `master_view_ship_${m.id}`,
+                    style: m.is_active ? 'primary' : 'danger'
+                }];
+            });
+
+            keyboard.push([{ text: '➕ Neue Versandmethode hinzufügen', callback_data: 'master_add_shipping', style: 'success' }]);
+            keyboard.push([{ text: '🔙 Zurück', callback_data: 'master_settings_hub', style: 'danger' }]);
+
+            const text = '🚚 *Versandmethoden verwalten*\n\n' +
+                'Hier kannst du die Versandoptionen für physische Artikel einrichten und deren Kosten / Aufpreise festlegen:\n\n' +
+                `Aktuell hinterlegt: *${methods.length} Versandmethode(n)*`;
+
+            await uiHelper.updateOrSend(ctx, text, { inline_keyboard: keyboard });
+        } catch (error) { console.error('master_manage_shipping error:', error.message); }
+    });
+
+    bot.action('master_add_shipping', isMasterAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            await ctx.scene.enter('addShippingMethodScene');
+        } catch (error) { console.error('master_add_shipping error:', error.message); }
+    });
+
+    bot.action(/^master_view_ship_(.+)$/, isMasterAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const shipId = ctx.match[1];
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            const method = await shippingRepo.getShippingMethodById(shipId);
+            if (!method) return ctx.answerCbQuery('Versandmethode nicht gefunden.', { show_alert: true });
+
+            let text = `🚚 *${method.name}*\n\n`;
+            text += `💰 *Kosten / Aufpreis:* ${formatters.formatPrice(method.cost)}\n`;
+            text += `📊 *Status:* ${method.is_active ? 'Aktiviert ✅' : 'Deaktiviert ❌'}\n`;
+            if (method.description) text += `📝 *Beschreibung:* _${method.description}_\n`;
+
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: method.is_active ? '👻 Deaktivieren' : '✅ Aktivieren', callback_data: `master_toggle_ship_${method.id}`, style: method.is_active ? 'danger' : 'success' }],
+                    [{ text: '💰 Kosten / Preis ändern', callback_data: `master_edit_ship_cost_${method.id}`, style: 'primary' }],
+                    [{ text: '✏️ Name ändern', callback_data: `master_edit_ship_name_${method.id}`, style: 'primary' }],
+                    [{ text: '🗑 Versandmethode löschen', callback_data: `master_del_ship_${method.id}`, style: 'danger' }],
+                    [{ text: '🔙 Zurück', callback_data: 'master_manage_shipping', style: 'danger' }]
+                ]
+            };
+            await uiHelper.updateOrSend(ctx, text, keyboard);
+        } catch (error) { console.error('master_view_ship error:', error.message); }
+    });
+
+    bot.action(/^master_toggle_ship_(.+)$/, isMasterAdmin, async (ctx) => {
+        try {
+            const shipId = ctx.match[1];
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            const method = await shippingRepo.getShippingMethodById(shipId);
+            if (!method) return ctx.answerCbQuery('Nicht gefunden.', { show_alert: true });
+
+            await shippingRepo.toggleShippingMethodActive(shipId, !method.is_active);
+            ctx.answerCbQuery(method.is_active ? '👻 Deaktiviert' : '✅ Aktiviert').catch(() => {});
+            ctx.update.callback_query.data = `master_view_ship_${shipId}`;
+            return bot.handleUpdate(ctx.update);
+        } catch (error) { console.error('master_toggle_ship error:', error.message); }
+    });
+
+    bot.action(/^master_del_ship_(.+)$/, isMasterAdmin, async (ctx) => {
+        try {
+            const shipId = ctx.match[1];
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            await shippingRepo.deleteShippingMethod(shipId);
+            ctx.answerCbQuery('🗑 Versandmethode gelöscht.').catch(() => {});
+            ctx.update.callback_query.data = 'master_manage_shipping';
+            return bot.handleUpdate(ctx.update);
+        } catch (error) { console.error('master_del_ship error:', error.message); }
+    });
+
+    bot.action(/^master_edit_ship_cost_(.+)$/, isMasterAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const shipId = ctx.match[1];
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            const method = await shippingRepo.getShippingMethodById(shipId);
+            if (!method) return ctx.answerCbQuery('Nicht gefunden.', { show_alert: true });
+
+            if (!ctx.session) ctx.session = {};
+            ctx.session.awaitingShipCost = shipId;
+
+            await ctx.reply(
+                `💰 *Versandkosten ändern für "${method.name}"*\n\n` +
+                `Aktuell: *${formatters.formatPrice(method.cost)}*\n\n` +
+                `Bitte sende den neuen Betrag in Euro (z. B. \`6.90\` oder \`0\` für kostenlos):`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '❌ Abbrechen', callback_data: `master_view_ship_${shipId}`, style: 'danger' }]]
+                    }
+                }
+            );
+        } catch (error) { console.error('master_edit_ship_cost error:', error.message); }
+    });
+
+    bot.action(/^master_edit_ship_name_(.+)$/, isMasterAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const shipId = ctx.match[1];
+            const shippingRepo = require('../../database/repositories/shippingRepo');
+            const method = await shippingRepo.getShippingMethodById(shipId);
+            if (!method) return ctx.answerCbQuery('Nicht gefunden.', { show_alert: true });
+
+            if (!ctx.session) ctx.session = {};
+            ctx.session.awaitingShipName = shipId;
+
+            await ctx.reply(
+                `✏️ *Versandmethode umbenennen*\n\n` +
+                `Aktueller Name: *${method.name}*\n\n` +
+                `Bitte sende den neuen Namen im Chat:`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '❌ Abbrechen', callback_data: `master_view_ship_${shipId}`, style: 'danger' }]]
+                    }
+                }
+            );
+        } catch (error) { console.error('master_edit_ship_name error:', error.message); }
     });
 
     bot.action(/^master_toggle_autoverify_(.+)$/, isMasterAdmin, async (ctx) => {
@@ -714,7 +850,54 @@ module.exports = (bot) => {
         if (input.startsWith('/')) {
             ctx.session.awaitingAdminId = null;
             ctx.session.awaitingCryptoSymbol = null;
+            ctx.session.awaitingShipCost = null;
+            ctx.session.awaitingShipName = null;
             return next();
+        }
+
+        if (ctx.session.awaitingShipCost) {
+            const shipId = ctx.session.awaitingShipCost;
+            ctx.session.awaitingShipCost = null;
+            const parsed = parseFloat(input.replace(',', '.'));
+            if (isNaN(parsed) || parsed < 0) {
+                await ctx.reply('⚠️ Bitte einen gültigen Betrag eingeben (z. B. `4.99` oder `0`):', {
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '❌ Abbrechen', callback_data: `master_view_ship_${shipId}`, style: 'danger' }]]
+                    }
+                });
+                return;
+            }
+            try {
+                const shippingRepo = require('../../database/repositories/shippingRepo');
+                await shippingRepo.updateShippingMethod(shipId, { cost: parsed });
+                await ctx.reply(`✅ Versandkosten auf *${formatters.formatPrice(parsed)}* aktualisiert!`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🔙 Zurück zur Versandmethode', callback_data: `master_view_ship_${shipId}`, style: 'primary' }]]
+                    }
+                });
+            } catch (e) {
+                await ctx.reply(`❌ Fehler beim Aktualisieren: ${e.message}`);
+            }
+            return;
+        }
+
+        if (ctx.session.awaitingShipName) {
+            const shipId = ctx.session.awaitingShipName;
+            ctx.session.awaitingShipName = null;
+            try {
+                const shippingRepo = require('../../database/repositories/shippingRepo');
+                await shippingRepo.updateShippingMethod(shipId, { name: input });
+                await ctx.reply(`✅ Versandmethode in *${input}* umbenannt!`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🔙 Zurück zur Versandmethode', callback_data: `master_view_ship_${shipId}`, style: 'primary' }]]
+                    }
+                });
+            } catch (e) {
+                await ctx.reply(`❌ Fehler beim Aktualisieren: ${e.message}`);
+            }
+            return;
         }
 
         if (ctx.session.awaitingCryptoSymbol) {

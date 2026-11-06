@@ -299,6 +299,126 @@ module.exports = (bot) => {
         } catch (error) { console.error('admin_toggle_stock error:', error.message); }
     });
 
+    // ─── PHYSISCHEN VORRAT HÄNDISCH ANPASSEN ──────────────────────────────────
+    bot.action(/^admin_edit_stock_(.+)$/, isAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const productId = ctx.match[1];
+            const product = await productRepo.getProductById(productId);
+            if (!product) return ctx.answerCbQuery('Produkt nicht gefunden.', { show_alert: true });
+
+            if (!ctx.session) ctx.session = {};
+            ctx.session.awaitingPhysicalStock = productId;
+
+            const currentStock = product.stock !== null && product.stock !== undefined ? product.stock : 0;
+            const text = `📦 *Vorrat bearbeiten für "${product.name}"*\n\n` +
+                `Aktueller physischer Bestand: *${currentStock} Stück*\n\n` +
+                `Bitte sende jetzt die neue Stückzahl als Zahl (z. B. \`25\` oder \`0\` für ausverkauft):`;
+
+            await ctx.reply(text, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: '❌ Abbrechen', callback_data: `admin_edit_prod_${productId}`, style: 'danger' }]]
+                }
+            });
+        } catch (error) { console.error('admin_edit_stock error:', error.message); }
+    });
+
+    // ─── PRODUKT-ZAHLUNGSMETHODEN ANPASSEN ───────────────────────────────────
+    bot.action(/^admin_prod_payments_(.+)$/, isAdmin, async (ctx) => {
+        ctx.answerCbQuery().catch(() => {});
+        try {
+            const productId = ctx.match[1];
+            const product = await productRepo.getProductById(productId);
+            if (!product) return ctx.answerCbQuery('Produkt nicht gefunden.', { show_alert: true });
+
+            const paymentRepo = require('../../database/repositories/paymentRepo');
+            const allMethods = await paymentRepo.getActivePaymentMethods();
+
+            if (!allMethods || allMethods.length === 0) {
+                return uiHelper.updateOrSend(ctx, '⚠️ Keine aktiven Zahlungsmethoden im Shop vorhanden.', {
+                    inline_keyboard: [[{ text: '🔙 Zurück zum Produkt', callback_data: `admin_edit_prod_${productId}`, style: 'danger' }]]
+                });
+            }
+
+            const currentAllowed = Array.isArray(product.allowed_payment_methods) ? product.allowed_payment_methods : [];
+            const isRestricted = currentAllowed.length > 0;
+
+            const keyboard = allMethods.map(m => {
+                const isAllowed = !isRestricted || currentAllowed.includes(m.id);
+                const statusIcon = isAllowed ? '✅' : '❌';
+                let icon = '💳';
+                if (paymentRepo.isCashMethod(m)) icon = '💵';
+                else if (m.auto_verify) icon = '⚡';
+                return [{
+                    text: `${statusIcon} ${icon} ${m.name}`,
+                    callback_data: `admin_toggle_prod_pay_${productId}_${m.id}`,
+                    style: isAllowed ? 'success' : 'danger'
+                }];
+            });
+
+            if (isRestricted) {
+                keyboard.push([{ text: '🔄 Alle erlauben (Standard)', callback_data: `admin_reset_prod_pay_${productId}`, style: 'primary' }]);
+            }
+            keyboard.push([{ text: '🔙 Zurück zum Produkt', callback_data: `admin_edit_prod_${productId}`, style: 'danger' }]);
+
+            const statusSummary = isRestricted 
+                ? `⚠️ Für dieses Produkt sind *${currentAllowed.length} von ${allMethods.length}* Zahlungsarten freigeschaltet.`
+                : '✅ Aktuell sind *alle aktiven Zahlungsmethoden* des Shops für dieses Produkt freigeschaltet (Standard).';
+
+            const text = `💳 *Zahlungsmethoden für "${product.name}"*\n\n` +
+                `${statusSummary}\n\n` +
+                `Tippe auf eine Zahlungsmethode, um sie für dieses Produkt ein- oder auszublenden:`;
+
+            await uiHelper.updateOrSend(ctx, text, { inline_keyboard: keyboard });
+        } catch (error) { console.error('admin_prod_payments error:', error.message); }
+    });
+
+    bot.action(/^admin_toggle_prod_pay_([a-zA-Z0-9-]+)_([a-zA-Z0-9-]+)$/, isAdmin, async (ctx) => {
+        try {
+            const productId = ctx.match[1];
+            const pmId = ctx.match[2];
+            const product = await productRepo.getProductById(productId);
+            if (!product) return ctx.answerCbQuery('Produkt nicht gefunden.', { show_alert: true });
+
+            const paymentRepo = require('../../database/repositories/paymentRepo');
+            const allMethods = await paymentRepo.getActivePaymentMethods();
+            const allIds = allMethods.map(m => m.id);
+
+            let currentAllowed = Array.isArray(product.allowed_payment_methods) ? [...product.allowed_payment_methods] : [];
+
+            if (currentAllowed.length === 0) {
+                // Von "Alle an" wechseln zu: alle außer pmId
+                currentAllowed = allIds.filter(id => id !== pmId);
+            } else {
+                if (currentAllowed.includes(pmId)) {
+                    currentAllowed = currentAllowed.filter(id => id !== pmId);
+                } else {
+                    currentAllowed.push(pmId);
+                }
+                // Falls wieder alle aktiv sind, zurück auf leere Liste = Standard
+                if (allIds.every(id => currentAllowed.includes(id))) {
+                    currentAllowed = [];
+                }
+            }
+
+            await productRepo.updateProductAllowedPaymentMethods(productId, currentAllowed);
+            ctx.answerCbQuery('✅ Gespeichert').catch(() => {});
+            ctx.update.callback_query.data = `admin_prod_payments_${productId}`;
+            return bot.handleUpdate(ctx.update);
+        } catch (error) { console.error('admin_toggle_prod_pay error:', error.message); }
+    });
+
+    bot.action(/^admin_reset_prod_pay_(.+)$/, isAdmin, async (ctx) => {
+        try {
+            const productId = ctx.match[1];
+            await productRepo.updateProductAllowedPaymentMethods(productId, []);
+            ctx.answerCbQuery('🔄 Standard wiederhergestellt (alle aktiv)').catch(() => {});
+            ctx.update.callback_query.data = `admin_prod_payments_${productId}`;
+            return bot.handleUpdate(ctx.update);
+        } catch (error) { console.error('admin_reset_prod_pay error:', error.message); }
+    });
+
     // ─── PREIS ÄNDERN ────────────────────────────────────────────────────────
     bot.action(/^admin_price_(.+)$/, isAdmin, async (ctx) => {
         ctx.answerCbQuery().catch(() => {});
@@ -458,7 +578,39 @@ module.exports = (bot) => {
         if (input.startsWith('/')) {
             ctx.session.awaitingBulkStock = null;
             ctx.session.awaitingSingleStock = null;
+            ctx.session.awaitingPhysicalStock = null;
             return next();
+        }
+
+        if (ctx.session.awaitingPhysicalStock) {
+            const productId = ctx.session.awaitingPhysicalStock;
+            ctx.session.awaitingPhysicalStock = null;
+
+            const stockNum = parseInt(input, 10);
+            if (isNaN(stockNum) || stockNum < 0) {
+                await ctx.reply('⚠️ Ungültige Stückzahl. Bitte eine ganze Zahl >= 0 eingeben (z. B. `15` oder `0`):', {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '❌ Abbrechen', callback_data: `admin_edit_prod_${productId}`, style: 'danger' }]]
+                    }
+                });
+                return;
+            }
+
+            try {
+                await productRepo.updateProductStock(productId, stockNum);
+                const statusNote = stockNum === 0 ? ' (als ausverkauft markiert)' : '';
+                await ctx.reply(`✅ *Vorrat erfolgreich aktualisiert!*\n\n📦 Neuer physischer Bestand: *${stockNum} Stück*${statusNote}`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🔙 Zurück zum Produkt', callback_data: `admin_edit_prod_${productId}`, style: 'primary' }]]
+                    }
+                });
+            } catch (error) {
+                console.error('Physical stock update error:', error.message);
+                await ctx.reply(`❌ Fehler beim Aktualisieren: ${error.message}`);
+            }
+            return;
         }
 
         if (ctx.session.awaitingBulkStock) {

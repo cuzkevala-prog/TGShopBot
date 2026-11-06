@@ -7,40 +7,82 @@ const generateCustomOrderId = () => {
 
 const SELECT_FULL = `id, order_id, user_id, total_amount, status, details,
     shipping_link, payment_method_name,
-    delivery_method, admin_notes, tx_id, created_at, notification_msg_ids, feedback_invited, digital_delivery,
+    delivery_method, shipping_method_name, shipping_cost, admin_notes, tx_id, created_at, notification_msg_ids, feedback_invited, digital_delivery,
     crypto_amount, payment_identifier, confirmations, received_crypto_amount, crypto_rate, last_rate_update, kyc_submission, auto_delivery_disabled`;
 
-const createOrder = async (userId, totalAmount, orderDetails, options = {}) => {
-    const { shippingLink, paymentMethodName, deliveryMethod, cryptoAmount, paymentIdentifier, cryptoRate, kycSubmission } = options;
+const createOrder = async (userIdOrObj, totalAmount, orderDetails, options = {}) => {
+    let userId = userIdOrObj;
+    let finalTotal = totalAmount;
+    let finalDetails = orderDetails;
+    let finalOptions = options;
+
+    if (typeof userIdOrObj === 'object' && userIdOrObj !== null) {
+        userId = userIdOrObj.userId || userIdOrObj.user_id;
+        finalTotal = userIdOrObj.totalAmount !== undefined ? userIdOrObj.totalAmount : userIdOrObj.total_amount;
+        finalDetails = userIdOrObj.orderDetails || userIdOrObj.details || [userIdOrObj];
+        finalOptions = {
+            shippingLink: userIdOrObj.shippingLink || userIdOrObj.shipping_link || userIdOrObj.shipping_address,
+            paymentMethodName: userIdOrObj.paymentMethodName || userIdOrObj.payment_method_name || userIdOrObj.payment_method,
+            deliveryMethod: userIdOrObj.deliveryMethod || userIdOrObj.delivery_method,
+            shippingMethodName: userIdOrObj.shippingMethodName || userIdOrObj.shipping_method_name,
+            shippingCost: userIdOrObj.shippingCost !== undefined ? userIdOrObj.shippingCost : userIdOrObj.shipping_cost,
+            cryptoAmount: userIdOrObj.cryptoAmount || userIdOrObj.crypto_amount,
+            paymentIdentifier: userIdOrObj.paymentIdentifier || userIdOrObj.payment_identifier,
+            cryptoRate: userIdOrObj.cryptoRate || userIdOrObj.crypto_rate,
+            kycSubmission: userIdOrObj.kycSubmission || userIdOrObj.kyc_submission
+        };
+    }
+
+    const { shippingLink, paymentMethodName, deliveryMethod, shippingMethodName, shippingCost, cryptoAmount, paymentIdentifier, cryptoRate, kycSubmission } = finalOptions;
     const customId = generateCustomOrderId();
 
-    const { data, error } = await supabase
-        .from('orders')
-        .insert([{
-            user_id: userId,
-            order_id: customId,
-            total_amount: totalAmount,
-            details: orderDetails, 
-            status: 'offen',
-            shipping_link: shippingLink || null,
-            payment_method_name: paymentMethodName || 'Nicht angegeben',
-            delivery_method: deliveryMethod || 'none',
-            admin_notes: [],
-            notification_msg_ids: [],
-            feedback_invited: false,
-            digital_delivery: null,
-            crypto_amount: cryptoAmount || null,
-            payment_identifier: paymentIdentifier || null,
-            confirmations: 0,
-            received_crypto_amount: null,
-            crypto_rate: cryptoRate || null,
-            last_rate_update: new Date().toISOString(),
-            kyc_submission: kycSubmission || null
-        }])
-        .select(SELECT_FULL);
+    const insertObj = {
+        user_id: userId,
+        order_id: customId,
+        total_amount: finalTotal,
+        details: finalDetails, 
+        status: 'offen',
+        shipping_link: shippingLink || null,
+        payment_method_name: paymentMethodName || 'Nicht angegeben',
+        delivery_method: deliveryMethod || 'none',
+        shipping_method_name: shippingMethodName || null,
+        shipping_cost: parseFloat(shippingCost) || 0.00,
+        admin_notes: [],
+        notification_msg_ids: [],
+        feedback_invited: false,
+        digital_delivery: null,
+        crypto_amount: cryptoAmount || null,
+        payment_identifier: paymentIdentifier || null,
+        confirmations: 0,
+        received_crypto_amount: null,
+        crypto_rate: cryptoRate || null,
+        last_rate_update: new Date().toISOString(),
+        kyc_submission: kycSubmission || null
+    };
 
-    if (error) throw error;
-    return data[0];
+    try {
+        const { data, error } = await supabase
+            .from('orders')
+            .insert([insertObj])
+            .select(SELECT_FULL);
+
+        if (error) throw error;
+        return data[0];
+    } catch (err) {
+        // Fallback falls shipping_method_name/shipping_cost in legacy Tabellen noch fehlen
+        if (err.message && (err.message.includes('shipping_method_name') || err.message.includes('shipping_cost'))) {
+            delete insertObj.shipping_method_name;
+            delete insertObj.shipping_cost;
+            const fallbackSelect = `id, order_id, user_id, total_amount, status, details, shipping_link, payment_method_name, delivery_method, admin_notes, tx_id, created_at, notification_msg_ids, feedback_invited, digital_delivery, crypto_amount, payment_identifier, confirmations, received_crypto_amount, crypto_rate, last_rate_update, kyc_submission, auto_delivery_disabled`;
+            const { data, error } = await supabase
+                .from('orders')
+                .insert([insertObj])
+                .select(fallbackSelect);
+            if (error) throw error;
+            return data[0];
+        }
+        throw err;
+    }
 };
 
 const getOrderByOrderId = async (orderId) => {

@@ -10,11 +10,19 @@ const orderRepo = require('../../database/repositories/orderRepo');
 const settingsRepo = require('../../database/repositories/settingsRepo');
 const deliverableRepo = require('../../database/repositories/deliverableRepo');
 
+const getProductStockCount = async (p) => {
+    const isPhysical = p.delivery_option && p.delivery_option !== 'none';
+    if (isPhysical) {
+        return p.stock !== null && p.stock !== undefined ? p.stock : 0;
+    }
+    return await deliverableRepo.getAvailableCount(p.id).catch(() => 0);
+};
+
 const buildProductLabel = async (p, showExactStock) => {
-    if (p.is_out_of_stock) {
+    const count = await getProductStockCount(p);
+    if (p.is_out_of_stock || count <= 0) {
         return `❌ ${p.name} (${formatters.formatPrice(p.price)})`;
     }
-    const count = await deliverableRepo.getAvailableCount(p.id).catch(() => 0);
     if (showExactStock && count > 0) {
         return `${p.name} – ${formatters.formatPrice(p.price)} [${count} auf Lager]`;
     }
@@ -156,7 +164,8 @@ module.exports = (bot) => {
             if (!product) return;
 
             const showExactStock = await settingsRepo.isShowExactStock();
-            const stockCount = await deliverableRepo.getAvailableCount(product.id).catch(() => 0);
+            const stockCount = await getProductStockCount(product);
+            const isOutOfStock = product.is_out_of_stock || stockCount <= 0;
 
             let path = '';
             try {
@@ -176,9 +185,9 @@ module.exports = (bot) => {
             text += `\n💰 ${formatters.formatPrice(product.price)}`;
 
             if (showExactStock) {
-                text += `\n📦 Vorrat: ${stockCount > 0 ? `${stockCount} auf Lager` : 'Ausverkauft'}`;
+                text += `\n📦 Vorrat: ${!isOutOfStock ? `${stockCount} auf Lager` : 'Ausverkauft'}`;
             } else {
-                text += `\n📦 Status: ${stockCount > 0 && !product.is_out_of_stock ? 'Verfügbar ✅' : 'Ausverkauft ❌'}`;
+                text += `\n📦 Status: ${!isOutOfStock ? 'Verfügbar ✅' : 'Ausverkauft ❌'}`;
             }
 
             if (product.description) text += `\n\n📝 ${product.description}`;
@@ -188,7 +197,7 @@ module.exports = (bot) => {
                 : (product.category_id ? `category_${product.category_id}` : 'shop_menu');
             
             const keyboard = { inline_keyboard: [] };
-            if (!product.is_out_of_stock) {
+            if (!isOutOfStock) {
                 keyboard.inline_keyboard.push([{ text: '🛒 In den Warenkorb', callback_data: `add_to_cart_${product.id}`, style: 'success' }]);
             } else {
                 keyboard.inline_keyboard.push([{ text: '❌ Ausverkauft', callback_data: 'noop', style: 'danger' }]);

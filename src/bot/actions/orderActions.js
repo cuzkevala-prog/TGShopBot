@@ -13,6 +13,31 @@ const notificationService = require('../../services/notificationService');
 
 const FINAL_STATUSES = ['abgeschlossen', 'abgebrochen', 'loeschung_angefragt'];
 
+const restorePhysicalStockIfNeeded = async (order) => {
+    if (!order) return;
+    let items = [];
+    if (Array.isArray(order.details)) {
+        items = order.details;
+    } else if (typeof order.details === 'string') {
+        try { items = JSON.parse(order.details); } catch(e) {}
+    } else if (order.product_id) {
+        items = [order];
+    }
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const productRepo = require('../../database/repositories/productRepo');
+    for (const item of items) {
+        const prodId = item.product_id || item.id;
+        if (!prodId) continue;
+        const product = await productRepo.getProductById(prodId).catch(() => null);
+        if (product && product.delivery_option && product.delivery_option !== 'none') {
+            const currentStock = product.stock !== null && product.stock !== undefined ? product.stock : 0;
+            const restoredStock = currentStock + (parseInt(item.quantity, 10) || 1);
+            await productRepo.updateProductStock(prodId, restoredStock);
+        }
+    }
+};
+
 module.exports = (bot) => {
 
     bot.action('admin_open_orders', isAdmin, async (ctx) => {
@@ -102,6 +127,10 @@ module.exports = (bot) => {
                 });
             }
 
+            if (newStatus === 'abgebrochen' && order.status !== 'abgebrochen') {
+                await restorePhysicalStockIfNeeded(order);
+            }
+
             const updated = await orderRepo.updateOrderStatus(orderId, newStatus);
             await notificationService.notifyCustomerStatusUpdate(updated.user_id, orderId, newStatus);
             
@@ -115,6 +144,10 @@ module.exports = (bot) => {
         try {
             const orderId = ctx.match[1];
             const newStatus = ctx.match[2];
+            const order = await orderRepo.getOrderByOrderId(orderId);
+            if (newStatus === 'abgebrochen' && order && order.status !== 'abgebrochen') {
+                await restorePhysicalStockIfNeeded(order);
+            }
             const updated = await orderRepo.updateOrderStatus(orderId, newStatus);
             await notificationService.notifyCustomerStatusUpdate(updated.user_id, orderId, newStatus);
             const payload = await orderHelper.buildOrderViewPayload(updated);
@@ -464,3 +497,5 @@ module.exports = (bot) => {
         return next();
     });
 };
+
+module.exports.restorePhysicalStockIfNeeded = restorePhysicalStockIfNeeded;

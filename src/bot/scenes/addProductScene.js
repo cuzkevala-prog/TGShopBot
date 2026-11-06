@@ -197,9 +197,14 @@ const addProductScene = new Scenes.WizardScene(
                         ctx.wizard.state.step = 'kyc_mode';
                         await showKycModeOptions(ctx);
                         return;
+                    } else if (chosenOption === 'pickup') {
+                        ctx.wizard.state.productData.kycMode = 'none';
+                        ctx.wizard.state.productData.kycOptions = [];
+                        return await promptForInitialStock(ctx);
                     } else {
                         ctx.wizard.state.productData.kycMode = 'none';
                         ctx.wizard.state.productData.kycOptions = [];
+                        ctx.wizard.state.productData.stock = 0;
                         return await saveAndFinishProduct(ctx);
                     }
                 }
@@ -210,7 +215,7 @@ const addProductScene = new Scenes.WizardScene(
                 if (data === 'kyc_mode_none') {
                     ctx.wizard.state.productData.kycMode = 'none';
                     ctx.wizard.state.productData.kycOptions = [];
-                    return await saveAndFinishProduct(ctx);
+                    return await promptForInitialStock(ctx);
                 }
                 if (data === 'kyc_mode_optional' || data === 'kyc_mode_required') {
                     ctx.wizard.state.productData.kycMode = data === 'kyc_mode_optional' ? 'optional' : 'required';
@@ -230,8 +235,14 @@ const addProductScene = new Scenes.WizardScene(
                 };
                 if (typeMap[data]) {
                     ctx.wizard.state.productData.kycOptions = [typeMap[data]];
-                    return await saveAndFinishProduct(ctx);
+                    return await promptForInitialStock(ctx);
                 }
+            }
+
+            if (ctx.wizard.state.step === 'initial_stock' && data === 'skip_stock') {
+                ctx.answerCbQuery().catch(() => {});
+                ctx.wizard.state.productData.stock = 0;
+                return await saveAndFinishProduct(ctx);
             }
         }
 
@@ -314,6 +325,12 @@ const addProductScene = new Scenes.WizardScene(
             await showDeliveryOptions(ctx);
             return;
         }
+
+        if (ctx.wizard.state.step === 'initial_stock' && ctx.message?.text) {
+            const num = parseInt(ctx.message.text.trim(), 10);
+            ctx.wizard.state.productData.stock = isNaN(num) || num < 0 ? 0 : num;
+            return await saveAndFinishProduct(ctx);
+        }
     }
 );
 
@@ -389,6 +406,20 @@ async function showKycTypeOptions(ctx) {
 }
 
 /**
+ * Hilfsfunktion: Fragt nach dem anfänglichen physischen Vorrat.
+ */
+async function promptForInitialStock(ctx) {
+    ctx.wizard.state.step = 'initial_stock';
+    const text = '📦 *Physischer Vorrat:*\n\nWie viele Stück hast du aktuell auf Lager? (z.B. `10` oder `0` falls noch kein Bestand):';
+    const kb = {
+        inline_keyboard: [[{ text: '⏩ Überspringen (0 Stück)', callback_data: 'skip_stock', style: 'primary' }]]
+    };
+    await ctx.editMessageText?.(text, { parse_mode: 'Markdown', reply_markup: kb }).catch(async () => {
+        await ctx.reply(text, { parse_mode: 'Markdown', reply_markup: kb });
+    });
+}
+
+/**
  * Hilfsfunktion: Speichert das Produkt final.
  */
 async function saveAndFinishProduct(ctx) {
@@ -405,11 +436,15 @@ async function saveAndFinishProduct(ctx) {
             fileId: pd.fileId,
             deliveryOption: pd.deliveryOption,
             kycMode: pd.kycMode || 'none',
-            kycOptions: pd.kycOptions || []
+            kycOptions: pd.kycOptions || [],
+            stock: pd.stock !== undefined ? pd.stock : 0
         });
         
         const deliveryLabel = texts.getDeliveryLabel ? texts.getDeliveryLabel(pd.deliveryOption) : pd.deliveryOption;
         let successText = `✅ *Produkt erstellt!*\n\n📦 *${pd.name}*\n💰 ${pd.price.toFixed(2)}€\n🚚 ${deliveryLabel}`;
+        if (pd.deliveryOption && pd.deliveryOption !== 'none') {
+            successText += `\n📦 Vorrat: ${pd.stock || 0} Stück`;
+        }
         if (pd.kycMode && pd.kycMode !== 'none') {
             const kycModeLabel = texts.getKycModeLabel ? texts.getKycModeLabel(pd.kycMode) : pd.kycMode;
             const kycTypeLabel = pd.kycOptions && pd.kycOptions[0] ? (texts.getKycTypeLabel ? texts.getKycTypeLabel(pd.kycOptions[0]) : pd.kycOptions[0]) : '';

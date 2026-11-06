@@ -26,6 +26,9 @@ function buildAdminOrderView(order) {
     if (order.crypto_amount) text += `🪙 *Krypto-Betrag:* \`${order.crypto_amount}\`\n`;
     if (order.payment_identifier) text += `📌 *Kennziffer:* \`${order.payment_identifier}\`\n`;
     text += `🚚 *Lieferart:* ${methodText}\n`;
+    if (order.shipping_method_name) {
+        text += `📦 *Versandmethode:* ${order.shipping_method_name}${order.shipping_cost ? ` (+${formatters.formatPrice(order.shipping_cost)})` : ''}\n`;
+    }
     text += `📊 *Status:* ${statusBadge}\n`;
 
     if (order.tx_id) text += `🔗 *TX-ID:* \`${order.tx_id}\`\n`;

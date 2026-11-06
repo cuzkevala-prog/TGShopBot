@@ -106,8 +106,10 @@ module.exports = (bot) => {
             if (order.payment_identifier) text += `📌 Kennziffer: \`${order.payment_identifier}\`\n`;
             if (rateNotice) text += rateNotice;
 
-            if (order.delivery_method === 'shipping') text += `🚚 Lieferung: Versand\n`;
-            else if (order.delivery_method === 'pickup') text += `🏪 Lieferung: Abholung\n`;
+            if (order.delivery_method === 'shipping') {
+                text += `🚚 Lieferung: Versand\n`;
+                if (order.shipping_method_name) text += `📦 Versandart: ${order.shipping_method_name}${order.shipping_cost ? ` (+${formatters.formatPrice(order.shipping_cost)})` : ''}\n`;
+            } else if (order.delivery_method === 'pickup') text += `🏪 Lieferung: Abholung\n`;
             else text += `📱 Lieferung: Digital\n`;
 
             if (order.tx_id) text += `🔑 TX-ID: \`${order.tx_id}\`\n`;

@@ -83,42 +83,43 @@ const askQuantityScene = new Scenes.WizardScene(
                 return ctx.scene.leave();
             }
 
-            const availableCount = await deliverableRepo.getAvailableCount(productId);
+            const isPhysical = product.delivery_option && product.delivery_option !== 'none';
+            const availableCount = isPhysical 
+                ? (product.stock !== null && product.stock !== undefined ? product.stock : 0)
+                : await deliverableRepo.getAvailableCount(productId);
+
             const userCart = await cartRepo.getCart(ctx.from.id).catch(() => []);
             const existingCartItem = userCart.find(item => item.products && String(item.products.id) === String(productId));
             const existingCartQty = existingCartItem ? existingCartItem.quantity : 0;
 
-            // Prüfe Tresor-Vorrat falls Vorräte vorhanden oder digitales Produkt
-            if (availableCount > 0 || product.delivery_option === 'none' || !product.delivery_option) {
-                if (availableCount === 0) {
-                    await productRepo.toggleProductStatus(productId, 'is_out_of_stock', true).catch(() => {});
-                    await cleanup(ctx);
-                    await ctx.reply(`⚠️ Das Produkt *"${product.name}"* ist derzeit ausverkauft.`, { parse_mode: 'Markdown' });
-                    return ctx.scene.leave();
-                }
+            if (product.is_out_of_stock || availableCount <= 0) {
+                await productRepo.toggleProductStatus(productId, 'is_out_of_stock', true).catch(() => {});
+                await cleanup(ctx);
+                await ctx.reply(`⚠️ Das Produkt *"${product.name}"* ist derzeit ausverkauft.`, { parse_mode: 'Markdown' });
+                return ctx.scene.leave();
+            }
 
-                if (existingCartQty >= availableCount) {
-                    await cleanup(ctx);
-                    await ctx.reply(`⚠️ Du hast bereits die maximal verfügbare Menge (*${availableCount} Stück*) von *"${product.name}"* in deinem Warenkorb.`, { parse_mode: 'Markdown' });
-                    return ctx.scene.leave();
-                }
+            if (existingCartQty >= availableCount) {
+                await cleanup(ctx);
+                await ctx.reply(`⚠️ Du hast bereits die maximal verfügbare Menge (*${availableCount} Stück*) von *"${product.name}"* in deinem Warenkorb.`, { parse_mode: 'Markdown' });
+                return ctx.scene.leave();
+            }
 
-                if (existingCartQty + quantity > availableCount) {
-                    const maxCanAdd = availableCount - existingCartQty;
-                    await cartRepo.addToCart(ctx.from.id, productId, maxCanAdd, username, categoryPath);
-                    await cleanup(ctx);
+            if (existingCartQty + quantity > availableCount) {
+                const maxCanAdd = availableCount - existingCartQty;
+                await cartRepo.addToCart(ctx.from.id, productId, maxCanAdd, username, categoryPath);
+                await cleanup(ctx);
 
-                    await ctx.reply(`⚠️ *Bestellmenge angepasst (Maximaler Vorrat)*\n\nVon *"${product.name}"* sind derzeit nur noch *${availableCount} Stück* auf Lager.\n(Du hattest bereits ${existingCartQty}x im Warenkorb)\n\nEs wurden *${maxCanAdd} Stück* zum Warenkorb hinzugefügt.`, {
-                        parse_mode: 'Markdown',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🛒 Zum Warenkorb', callback_data: 'cart_view', style: 'success' }],
-                                [{ text: '🛍 Weiter einkaufen', callback_data: 'shop_menu', style: 'primary' }]
-                            ]
-                        }
-                    });
-                    return ctx.scene.leave();
-                }
+                await ctx.reply(`⚠️ *Bestellmenge angepasst (Maximaler Vorrat)*\n\nVon *"${product.name}"* sind derzeit nur noch *${availableCount} Stück* auf Lager.\n(Du hattest bereits ${existingCartQty}x im Warenkorb)\n\nEs wurden *${maxCanAdd} Stück* zum Warenkorb hinzugefügt.`, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🛒 Zum Warenkorb', callback_data: 'cart_view', style: 'success' }],
+                            [{ text: '🛍 Weiter einkaufen', callback_data: 'shop_menu', style: 'primary' }]
+                        ]
+                    }
+                });
+                return ctx.scene.leave();
             }
             
             await cartRepo.addToCart(ctx.from.id, productId, quantity, username, categoryPath);

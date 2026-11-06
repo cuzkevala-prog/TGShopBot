@@ -19,20 +19,35 @@ const formatInvoice = (items, total, paymentMethod, orderId = null, extraOptions
     
     text += '\n';
 
-    items.forEach(item => {
+    const itemList = Array.isArray(items) ? items : [items];
+    itemList.forEach(item => {
+        if (!item) return;
         const safePath = item.category_path ? escapeMarkdown(item.category_path) : '';
         const pathString = safePath ? `_${safePath}_ » ` : ''; 
-        const safeName = escapeMarkdown(item.name);
+        const safeName = escapeMarkdown(item.name || 'Artikel');
+        const qty = item.quantity || 1;
+        const prc = item.price || 0;
+        const tot = item.total !== undefined ? item.total : (prc * qty);
         
-        text += `▪️ ${item.quantity}x ${pathString}${safeName} (${formatPrice(item.price)}) = ${formatPrice(item.total)}\n`;
+        text += `▪️ ${qty}x ${pathString}${safeName} (${formatPrice(prc)}) = ${formatPrice(tot)}\n`;
     });
 
     text += `\n━━━━━━━━━━━━━━━\n`;
     
-    if (extraOptions.discountAmount > 0) {
-        text += `💶 *Zwischensumme:* ${formatPrice(total)}\n`;
-        text += `🎟️ *Gutschein-Rabatt (${escapeMarkdown(extraOptions.couponCode || 'Coupon')}):* -${formatPrice(extraOptions.discountAmount)}\n`;
-        const finalTotal = Math.max(0, parseFloat(total) - parseFloat(extraOptions.discountAmount));
+    if (extraOptions.shippingMethodName) {
+        const costStr = (extraOptions.shippingCost && extraOptions.shippingCost > 0) ? ` (+${formatPrice(extraOptions.shippingCost)})` : ' (Kostenlos)';
+        text += `🚚 *Versandart:* ${escapeMarkdown(extraOptions.shippingMethodName)}${costStr}\n`;
+    }
+
+    if (extraOptions.discountAmount > 0 || (extraOptions.shippingCost && extraOptions.shippingCost > 0)) {
+        text += `💶 *Warenwert:* ${formatPrice(total)}\n`;
+        if (extraOptions.discountAmount > 0) {
+            text += `🎟️ *Gutschein-Rabatt (${escapeMarkdown(extraOptions.couponCode || 'Coupon')}):* -${formatPrice(extraOptions.discountAmount)}\n`;
+        }
+        if (extraOptions.shippingCost && extraOptions.shippingCost > 0) {
+            text += `🚚 *Versandkosten:* +${formatPrice(extraOptions.shippingCost)}\n`;
+        }
+        const finalTotal = Math.max(0, (parseFloat(total) - (parseFloat(extraOptions.discountAmount) || 0)) + (parseFloat(extraOptions.shippingCost) || 0));
         text += `💶 *Euro-Endbetrag:* ${formatPrice(finalTotal)}\n`;
     } else {
         text += `💶 *Euro-Gesamtsumme:* ${formatPrice(total)}\n`;

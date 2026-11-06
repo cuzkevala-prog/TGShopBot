@@ -1,12 +1,19 @@
-# 🤖 t.me/autoacts – TGSHOPBOT Core | v0.6.2
+# 🤖 t.me/autoacts – TGSHOPBOT Core | v0.6.4
 
-Ein professionelles, gehärtetes Telegram-E-Commerce-System mit transaktionaler Tresor-Auslieferung, Multi-Coin Blockchain Auto-Verifizierung, KYC-Legitimierung, Coupon-System, hierarchischer Rechteverwaltung und dezentraler Datenstruktur.
+Ein professionelles, gehärtetes Telegram-E-Commerce-System mit transaktionaler Tresor-Auslieferung, konfigurierbaren Versandmethoden, händischer physischer Vorratsverwaltung, Multi-Coin Blockchain Auto-Verifizierung, individuellen Zahlungsmethoden pro Produkt, KYC-Legitimierung, Coupon-System, hierarchischer Rechteverwaltung und dezentraler Datenstruktur.
 
 Entwickelt von **t.me/autoacts**.
 
 ---
 
-## 🆕 Release Notes v0.6.2 – Transaktionale Sicherheit & Massen-Auslieferung
+## 🆕 Release Notes v0.6.4 – Physische Artikel, Versand & Individuelle Zahlungsmethoden
+
+- 🪙 **Krypto-Zahlung bei physischen Artikeln**: Physische Artikel erlauben uneingeschränkt Krypto- und Barzahlung. Kunden können ihre bevorzugte Zahlungsart frei wählen; Blockchain Auto-Scan und TX-ID Abgleich unterstützen physische Bestellungen nahtlos.
+- 🚚 **Master-Versandmethoden & Checkout-Aufpreis**: Der Master kann Versandarten (z. B. DHL Paket, DHL Express, Briefversand) anlegen, editieren und bepreisen. Die gewählte Versandmethode und deren Kosten werden transparent im Checkout aufgerechnet.
+- 📦 **Händischer Vorrat für physische Artikel**: Physische Artikel benötigen keinen Tresor-Text mehr. Der Bestand kann direkt als Zahl hinterlegt und jederzeit editiert werden. Automatische Bestandsreduktion beim Kauf und Rückbuchung bei Stornierung.
+- 💳 **Produkt-individuelle Zahlungsmethoden**: Einzelne Zahlungsmethoden können pro Produkt individuell freigeschaltet oder ausgeblendet werden. Standardmäßig sind alle aktiven Methoden erlaubt.
+
+## 🆕 Release Notes v0.6.3 & v0.6.2
 
 - ⚡ **Transaktionale Tresor-Auslieferung & Purge-Schutz**: Digitale Artikel (`product_deliverables`) werden erst **nach** erfolgreicher Telegram-Zustellungsbestätigung aus der Vorrats-Datenbank gelöscht. Scheitert das Senden (z. B. Kunde hat den Bot blockiert), verbleiben 100% aller Artikel sicher im Tresor.
 - 🛡️ **Plaintext-Fallback & Sonderzeichen-Schutz**: Schützt Auslieferungen vor Telegram-Markdown-Parsing-Fehlern bei unentkommenen Zeichen in Zugangsdaten oder Keys (wie `[iPhone]`, `reg_date`, `|`).
@@ -73,16 +80,17 @@ npm install
 
 ### 2. Datenbank (Supabase PostgreSQL)
 1. Erstelle ein Projekt auf [supabase.com](https://supabase.com).
-2. Führe unter **SQL Editor** den Inhalt von `Setup/FULL_SCHEMA.sql` aus.
-3. Führe für Updates bestehender Versionen die Migrations-Skripte aus (`Setup/MIGRATION_UPDATE_v0.6.sql` & `Setup/MIGRATION_UPDATE_v0.6.1.sql`).
+2. Führe unter **SQL Editor** den Inhalt von `Setup/FULL_SCHEMA.sql` aus (legt alle Tabellen, Indizes und Berechtigungs-Grants an).
+3. Führe für Updates bestehender Versionen die Migrations-Skripte aus (`Setup/MIGRATION_UPDATE_v0.6.3.sql`).
 
 ### 3. Umgebungsvariablen (.env)
 ```env
 TELEGRAM_BOT_TOKEN=dein_bot_token
 SUPABASE_URL=https://dein-projekt.supabase.co
+# WICHTIG: Verwende den service_role secret Key (beginnt mit eyJhbGci...) aus dem Reiter "Legacy anon, service_role API keys"
 SUPABASE_KEY=dein_service_role_key
 MASTER_ADMIN_ID=deine_telegram_id
-VERSION=0.6.2
+VERSION=0.6.3
 PORT=10000
 ```
 

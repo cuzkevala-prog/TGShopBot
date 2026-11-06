@@ -23,6 +23,8 @@ const checkoutScene = new Scenes.WizardScene(
     'checkoutScene',
     async (ctx) => {
         ctx.wizard.state.shippingLink = null;
+        ctx.wizard.state.shippingMethod = null;
+        ctx.wizard.state.shippingCost = 0;
         ctx.wizard.state.paymentMethod = null;
         ctx.wizard.state.deliveryMethod = null;
         ctx.wizard.state.cartTotal = null;
@@ -139,9 +141,27 @@ const checkoutScene = new Scenes.WizardScene(
                 }
                 if (data === 'co_delivery_pickup') {
                     ctx.wizard.state.deliveryMethod = 'pickup';
+                    ctx.wizard.state.shippingMethod = null;
+                    ctx.wizard.state.shippingCost = 0;
                     await showPaymentSelection(ctx);
                     return;
                 }
+            }
+
+            if (phase === 'shipping_method_select' && data.startsWith('co_ship_')) {
+                const shipId = data.replace('co_ship_', '');
+                const shippingRepo = require('../../database/repositories/shippingRepo');
+                const selectedMethod = await shippingRepo.getShippingMethodById(shipId).catch(() => null);
+
+                if (selectedMethod) {
+                    ctx.wizard.state.shippingMethod = selectedMethod;
+                    ctx.wizard.state.shippingCost = parseFloat(selectedMethod.cost) || 0;
+                } else {
+                    ctx.wizard.state.shippingMethod = null;
+                    ctx.wizard.state.shippingCost = 0;
+                }
+
+                return await proceedAfterShippingChoice(ctx);
             }
 
             if (data === 'co_enter_coupon') {
@@ -176,12 +196,12 @@ const checkoutScene = new Scenes.WizardScene(
                     const rawName = ctx.from.username ? `@${ctx.from.username}` : (ctx.from.first_name || 'Kunde');
                     const username = escapeMarkdown(rawName);
 
-                    const currentTotal = ctx.wizard.state.discountAmount > 0 ? ctx.wizard.state.finalTotal : ctx.wizard.state.cartTotal;
+                    const finalTotal = ctx.wizard.state.finalTotal !== null ? ctx.wizard.state.finalTotal : ctx.wizard.state.cartTotal;
 
                     if (notificationService.notifyAdminsInterest) {
                         notificationService.notifyAdminsInterest({
                             username: username,
-                            total: formatters.formatPrice(currentTotal),
+                            total: formatters.formatPrice(finalTotal),
                             paymentName: paymentMethod.name
                         }).catch(() => {});
                     }
@@ -196,6 +216,8 @@ const checkoutScene = new Scenes.WizardScene(
                             isReview: true, 
                             discountAmount: ctx.wizard.state.discountAmount, 
                             couponCode: ctx.wizard.state.appliedCoupon?.code,
+                            shippingMethodName: ctx.wizard.state.shippingMethod?.name,
+                            shippingCost: ctx.wizard.state.shippingCost,
                             isCash: isCash
                         }
                     ) + '\n\n*Möchtest du den Kauf jetzt verbindlich abschließen und die Bestellung abschicken?*';
@@ -286,21 +308,29 @@ const checkoutScene = new Scenes.WizardScene(
                 if (isPrivnoteLink(input)) {
                     ctx.wizard.state.shippingLink = input;
 
-                    // KYC-Prüfung nach Adresseingabe für Versand
-                    if (ctx.wizard.state.kycMode && ctx.wizard.state.kycMode !== 'none') {
-                        ctx.wizard.state.phase = 'kyc_upload';
-                        const promptText = texts.getCheckoutKycPrompt ? texts.getCheckoutKycPrompt(ctx.wizard.state.kycMode, ctx.wizard.state.kycOption) : '🆔 *Legitimierung erforderlich:* Bitte sende ein Selfie / Ausweis-Foto.';
-                        const kb = [];
-                        if (ctx.wizard.state.kycMode === 'optional') {
-                            kb.push([{ text: '⏩ Überspringen', callback_data: 'co_skip_kyc', style: 'primary' }]);
-                        }
+                    // Versandmethoden prüfen & zur Auswahl stellen
+                    const shippingRepo = require('../../database/repositories/shippingRepo');
+                    const activeShipping = await shippingRepo.getActiveShippingMethods().catch(() => []);
+
+                    if (activeShipping && activeShipping.length > 0) {
+                        ctx.wizard.state.phase = 'shipping_method_select';
+                        const kb = activeShipping.map(sm => ([{
+                            text: `🚚 ${sm.name} (+${formatters.formatPrice(sm.cost)})`,
+                            callback_data: `co_ship_${sm.id}`,
+                            style: 'primary'
+                        }]));
                         kb.push([{ text: '❌ Abbrechen', callback_data: 'co_cancel', style: 'danger' }]);
-                        await ctx.reply(promptText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: kb } });
+                        await ctx.reply('🚚 *Versandmethode wählen*\n\nBitte wähle deine gewünschte Versandart:', {
+                            parse_mode: 'Markdown',
+                            reply_markup: { inline_keyboard: kb }
+                        });
                         return;
                     }
 
-                    await showPaymentSelection(ctx);
-                    return;
+                    // Falls keine Versandmethoden konfiguriert sind
+                    ctx.wizard.state.shippingMethod = null;
+                    ctx.wizard.state.shippingCost = 0;
+                    return await proceedAfterShippingChoice(ctx);
                 }
                 ctx.telegram.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
                 await ctx.reply(texts.getShippingPlaintextWarning(), {
@@ -313,36 +343,63 @@ const checkoutScene = new Scenes.WizardScene(
     }
 );
 
+async function proceedAfterShippingChoice(ctx) {
+    if (ctx.wizard.state.kycMode && ctx.wizard.state.kycMode !== 'none') {
+        ctx.wizard.state.phase = 'kyc_upload';
+        const promptText = texts.getCheckoutKycPrompt ? texts.getCheckoutKycPrompt(ctx.wizard.state.kycMode, ctx.wizard.state.kycOption) : '🆔 *Legitimierung erforderlich:* Bitte sende ein Selfie / Ausweis-Foto.';
+        const kb = [];
+        if (ctx.wizard.state.kycMode === 'optional') {
+            kb.push([{ text: '⏩ Überspringen', callback_data: 'co_skip_kyc', style: 'primary' }]);
+        }
+        kb.push([{ text: '❌ Abbrechen', callback_data: 'co_cancel', style: 'danger' }]);
+        await ctx.reply(promptText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: kb } });
+        return;
+    }
+
+    await showPaymentSelection(ctx);
+}
+
 async function showPaymentSelection(ctx) {
     try {
         const allMethods = await paymentRepo.getActivePaymentMethods();
         const rawTotal = parseFloat(ctx.wizard.state.cartTotal);
-        const finalTotal = ctx.wizard.state.discountAmount > 0 ? ctx.wizard.state.finalTotal : rawTotal;
+        const discountAmount = ctx.wizard.state.discountAmount || 0;
+        const shippingCost = ctx.wizard.state.shippingCost || 0;
+        const finalTotal = Math.max(0, (rawTotal - discountAmount) + shippingCost);
+        ctx.wizard.state.finalTotal = finalTotal;
 
         const isPhysical = ctx.wizard.state.hasPhysical || 
                            ctx.wizard.state.deliveryMethod === 'shipping' || 
                            ctx.wizard.state.deliveryMethod === 'pickup';
 
-        let paymentMethods = [];
-        if (isPhysical) {
-            // FÜR PHYSISCHE ARTIKEL: KEIN KRYPTO ANBIETEN!
-            // Nur Barzahlung und nicht-krypto Zahlungsarten anbieten.
-            paymentMethods = allMethods.filter(pm => !paymentRepo.isCryptoMethod(pm));
+        // 1. Hole alle Produkte im Warenkorb bezüglich individueller Zahlungsarten
+        const productRepo = require('../../database/repositories/productRepo');
+        const cartProducts = [];
+        for (const item of (ctx.wizard.state.orderDetails || [])) {
+            const p = await productRepo.getProductById(item.product_id || item.id).catch(() => null);
+            if (p) cartProducts.push(p);
+        }
 
-            // Falls der Betreiber noch keine Barzahlung in der DB hinterlegt hat:
-            if (paymentMethods.length === 0) {
-                paymentMethods = [{
-                    id: 'cash_default',
-                    name: '💵 Barzahlung (bei Abholung / Vor-Ort)',
-                    wallet_address: null,
-                    auto_verify: false,
-                    crypto_symbol: null,
-                    method_type: 'cash'
-                }];
-            }
-        } else {
-            // Rein digitale Artikel: Krypto und manuelle Methoden anbieten (keine Barzahlung vor Ort)
-            paymentMethods = allMethods.filter(pm => !paymentRepo.isCashMethod(pm));
+        // 2. Filtere Zahlungsmethoden nach Produkt-Einstellungen
+        let paymentMethods = allMethods.filter(pm => {
+            return cartProducts.every(p => {
+                if (!p.allowed_payment_methods || !Array.isArray(p.allowed_payment_methods) || p.allowed_payment_methods.length === 0) {
+                    return true; // Alle Zahlungsarten erlaubt
+                }
+                return p.allowed_payment_methods.includes(pm.id);
+            });
+        });
+
+        // 3. Fallunterscheidung Physisch vs Digital:
+        if (!isPhysical) {
+            // Rein digitale Artikel: Barzahlung vor Ort ausblenden
+            paymentMethods = paymentMethods.filter(pm => !paymentRepo.isCashMethod(pm));
+        }
+        // FÜR PHYSISCHE ARTIKEL: Krypto & Barzahlung sind beide erlaubt (sofern aktiv und nicht per Produkt ausgeschlossen)!
+
+        if (!paymentMethods || paymentMethods.length === 0) {
+            // Fallback auf Standardmethoden falls Filter leer war
+            paymentMethods = !isPhysical ? allMethods.filter(pm => !paymentRepo.isCashMethod(pm)) : allMethods;
         }
 
         if (!paymentMethods || paymentMethods.length === 0) {
@@ -360,16 +417,27 @@ async function showPaymentSelection(ctx) {
             return;
         }
 
-        let selectHeader = texts.getCheckoutSelectPayment();
+        const costLines = [];
+        costLines.push(`💰 *Warenwert:* ${formatters.formatPrice(rawTotal)}`);
+        if (discountAmount > 0) {
+            costLines.push(`🎟️ *Rabatt:* -${formatters.formatPrice(discountAmount)}`);
+        }
+        if (shippingCost > 0 && ctx.wizard.state.shippingMethod) {
+            costLines.push(`🚚 *Versand (${ctx.wizard.state.shippingMethod.name}):* +${formatters.formatPrice(shippingCost)}`);
+        }
+        costLines.push(`💶 *Gesamtbetrag:* ${formatters.formatPrice(finalTotal)}`);
+
+        let selectHeader = `💳 *Zahlungsart wählen*\n\n` +
+            costLines.join('\n') + `\n\n` +
+            `Bitte wähle deine bevorzugte Zahlungsart aus:`;
+
         if (isPhysical) {
-            selectHeader = `📦 *Physische Artikel – Barzahlung / Vor-Ort*\n\n` +
-                `Für physische Artikel erfolgt die Bezahlung in bar bei Abholung / Übergabe.\n` +
-                `💰 *Gesamtsumme:* ${formatters.formatPrice(finalTotal)}\n\n` +
-                `Bitte wähle die gewünschte Zahlungsart:`;
-        } else if (ctx.wizard.state.discountAmount > 0) {
-            selectHeader = `🎟️ *Gutschein "${ctx.wizard.state.appliedCoupon.code}" angewendet!*\n` +
-                `💰 *Rabatt:* -${formatters.formatPrice(ctx.wizard.state.discountAmount)}\n` +
-                `💶 *Neuer Endbetrag:* ${formatters.formatPrice(finalTotal)}\n\n` +
+            selectHeader = `📦 *Zahlungsart wählen (Physische Bestellung)*\n\n` +
+                costLines.join('\n') + `\n\n` +
+                `Bitte wähle deine gewünschte Zahlungsart:`;
+        } else if (discountAmount > 0) {
+            selectHeader = `🎟️ *Gutschein "${ctx.wizard.state.appliedCoupon.code}" angewendet!*\n\n` +
+                costLines.join('\n') + `\n\n` +
                 `Bitte wähle deine bevorzugte Zahlungsart aus:`;
         }
 
@@ -402,7 +470,8 @@ async function finalizeOrder(ctx) {
         
         const rawTotal = parseFloat(ctx.wizard.state.cartTotal);
         const discountAmount = ctx.wizard.state.discountAmount || 0;
-        const finalTotal = Math.max(0, rawTotal - discountAmount);
+        const shippingCost = ctx.wizard.state.shippingCost || 0;
+        const finalTotal = Math.max(0, (rawTotal - discountAmount) + shippingCost);
         const orderDetails = ctx.wizard.state.orderDetails;
 
         if (!orderDetails || orderDetails.length === 0) return ctx.scene.leave();
@@ -421,8 +490,12 @@ async function finalizeOrder(ctx) {
                 return ctx.scene.leave();
             }
 
-            const availCount = await deliverableRepo.getAvailableCount(prodId);
-            if (product.is_out_of_stock || (availCount === 0 && (product.delivery_option === 'none' || !product.delivery_option))) {
+            const isPhysicalProd = product.delivery_option && product.delivery_option !== 'none';
+            const availCount = isPhysicalProd 
+                ? (product.stock !== null && product.stock !== undefined ? product.stock : 0)
+                : await deliverableRepo.getAvailableCount(prodId);
+
+            if (product.is_out_of_stock || availCount <= 0) {
                 await productRepo.toggleProductStatus(prodId, 'is_out_of_stock', true).catch(() => {});
                 await ctx.reply(`⚠️ Das Produkt "${item.name}" ist derzeit leider ausverkauft.`, {
                     reply_markup: { inline_keyboard: [[{ text: '🛍 Zum Shop', callback_data: 'shop_menu' }]] }
@@ -430,8 +503,9 @@ async function finalizeOrder(ctx) {
                 return ctx.scene.leave();
             }
 
-            if (availCount > 0 && item.quantity > availCount) {
-                await ctx.reply(`⚠️ *Vorrat nicht ausreichend für "${item.name}"*\n\nDerzeit sind nur noch *${availCount} Stück* im Tresor auf Lager.\n(Gewünschte Menge: ${item.quantity} Stück)\n\nBitte passe deine Menge im Warenkorb an.`, {
+            if (item.quantity > availCount) {
+                const stockLocation = isPhysicalProd ? 'auf Lager' : 'im Tresor auf Lager';
+                await ctx.reply(`⚠️ *Vorrat nicht ausreichend für "${item.name}"*\n\nDerzeit sind nur noch *${availCount} Stück* ${stockLocation}.\n(Gewünschte Menge: ${item.quantity} Stück)\n\nBitte passe deine Menge im Warenkorb an.`, {
                     parse_mode: 'Markdown',
                     reply_markup: { inline_keyboard: [[{ text: '🛒 Zum Warenkorb', callback_data: 'cart_view' }]] }
                 });
@@ -468,10 +542,23 @@ async function finalizeOrder(ctx) {
             shippingLink: ctx.wizard.state.shippingLink,
             paymentMethodName: paymentMethodName,
             deliveryMethod: deliveryMethod,
+            shippingMethodName: ctx.wizard.state.shippingMethod?.name || null,
+            shippingCost: shippingCost,
             cryptoAmount: isCash ? null : (cryptoAmountFormatted || cryptoAmount),
             paymentIdentifier: isCash ? null : paymentIdentifier,
             kycSubmission: ctx.wizard.state.kycSubmission
         });
+
+        // Physische Bestände atomar verringern
+        for (const item of orderDetails) {
+            const prodId = item.product_id || item.id;
+            const product = await productRepo.getProductById(prodId).catch(() => null);
+            if (product && product.delivery_option && product.delivery_option !== 'none') {
+                const currentStock = product.stock !== null && product.stock !== undefined ? product.stock : 0;
+                const newStock = Math.max(0, currentStock - item.quantity);
+                await productRepo.updateProductStock(prodId, newStock);
+            }
+        }
 
         if (ctx.wizard.state.appliedCoupon) {
             await couponRepo.incrementCouponUses(ctx.wizard.state.appliedCoupon.code).catch(() => {});
@@ -485,6 +572,8 @@ async function finalizeOrder(ctx) {
             paymentName: paymentMethodName,
             walletAddress: walletAddress,
             deliveryMethod: deliveryMethod,
+            shippingMethodName: ctx.wizard.state.shippingMethod?.name || null,
+            shippingCost: shippingCost,
             cryptoAmountFormatted: cryptoAmountFormatted,
             isCash: isCash
         });
@@ -531,11 +620,13 @@ async function finalizeOrder(ctx) {
 
         await notificationService.notifyAdminsNewOrder({
             userId, username, orderDetails,
-            total: parseFloat(rawTotal).toFixed(2),
+            total: parseFloat(finalTotal).toFixed(2),
             paymentName: paymentMethodName,
             orderId: order.order_id,
             shippingLink: ctx.wizard.state.shippingLink,
             deliveryMethod,
+            shippingMethodName: ctx.wizard.state.shippingMethod?.name || null,
+            shippingCost: shippingCost,
             isCash
         }).catch(e => console.error('Admin Notify Error:', e.message));
 

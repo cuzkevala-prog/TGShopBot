@@ -668,29 +668,56 @@ async function fulfillOrderAutomatically(bot, order, txId, symbol = 'BTC') {
             }).catch(() => {});
         }
     } else {
-        // MANUELLE AUSLIEFERUNG ERFORDERLICH (UNZUREICHENDER VORRAT ODER PHYSICAL ITEMS)
+        // MANUELLE AUSLIEFERUNG ERFORDERLICH (UNZUREICHENDER DIGITALER VORRAT ODER PHYSICAL ITEMS)
+        const isPhysical = freshOrder.delivery_method === 'shipping' || freshOrder.delivery_method === 'pickup';
         await orderRepo.updateOrderStatus(freshOrder.order_id, 'in_bearbeitung');
-        await orderRepo.addAdminNote(freshOrder.order_id, 'System (Blockchain Auto-Verify)', `Zahlung per Blockchain bestätigt (TX: ${txId}). Manuelle Auslieferung erforderlich / Vorrat unzureichend.`);
 
-        const customerMsg = `⚡ *Krypto-Zahlung bestätigt!* (${symbol})\n\n` +
-            `Deine Zahlung für Bestellung \`#${freshOrder.order_id}\` wurde auf der Blockchain verifiziert!\n` +
-            `Der Shop-Admin bereitet deine Auslieferung vor.`;
+        if (isPhysical) {
+            const shipNotice = freshOrder.delivery_method === 'shipping' 
+                ? (freshOrder.shipping_method_name ? `Versand per ${freshOrder.shipping_method_name}` : 'Versand an Kunden')
+                : 'Abholung vor Ort';
+            await orderRepo.addAdminNote(freshOrder.order_id, 'System (Blockchain Auto-Verify)', `Zahlung per Blockchain bestätigt (TX: ${txId}). Physische Bestellung (${shipNotice}) – Manuelle Bearbeitung erforderlich.`);
 
-        if (bot) {
-            await bot.telegram.sendMessage(freshOrder.user_id, customerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+            const customerMsg = `⚡ *Krypto-Zahlung bestätigt!* (${symbol})\n\n` +
+                `Deine Zahlung für Bestellung \`#${freshOrder.order_id}\` wurde auf der Blockchain verifiziert!\n` +
+                (freshOrder.delivery_method === 'shipping' 
+                    ? `Der Shop-Admin bereitet dein Paket für den Versand vor.` 
+                    : `Der Shop-Admin bereitet deine Bestellung für die Abholung vor.`);
+
+            if (bot) {
+                await bot.telegram.sendMessage(freshOrder.user_id, customerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+            }
+
+            notificationService.notifyAdminsTxId({
+                orderId: freshOrder.order_id,
+                userId: freshOrder.user_id,
+                txId: txId,
+                username: `Auto-Scanner (📦 Physische Bestellung: ${shipNotice})`,
+                total: formatters.formatPrice(freshOrder.total_amount)
+            }).catch(() => {});
+        } else {
+            await orderRepo.addAdminNote(freshOrder.order_id, 'System (Blockchain Auto-Verify)', `Zahlung per Blockchain bestätigt (TX: ${txId}). Digitaler Vorrat unzureichend.`);
+
+            const customerMsg = `⚡ *Krypto-Zahlung bestätigt!* (${symbol})\n\n` +
+                `Deine Zahlung für Bestellung \`#${freshOrder.order_id}\` wurde auf der Blockchain verifiziert!\n` +
+                `Der Shop-Admin bereitet deine Auslieferung vor.`;
+
+            if (bot) {
+                await bot.telegram.sendMessage(freshOrder.user_id, customerMsg, { parse_mode: 'Markdown' }).catch(() => {});
+            }
+
+            const stockSummary = stockDetails.length > 0
+                ? stockDetails.map(s => `▪️ ${s.name}: ${s.count}/${s.needed} verfügbar`).join('\n')
+                : 'Keine digitalen Vorräte vorhanden';
+
+            notificationService.notifyAdminsTxId({
+                orderId: freshOrder.order_id,
+                userId: freshOrder.user_id,
+                txId: txId,
+                username: `Auto-Scanner (⚠️ DIGITALER VORRAT UNZUREICHEND:\n${stockSummary})`,
+                total: formatters.formatPrice(freshOrder.total_amount)
+            }).catch(() => {});
         }
-
-        const stockSummary = stockDetails.length > 0
-            ? stockDetails.map(s => `▪️ ${s.name}: ${s.count}/${s.needed} verfügbar`).join('\n')
-            : 'Keine digitalen Vorräte vorhanden';
-
-        notificationService.notifyAdminsTxId({
-            orderId: freshOrder.order_id,
-            userId: freshOrder.user_id,
-            txId: txId,
-            username: `Auto-Scanner (⚠️ VORRAT UNZUREICHEND:\n${stockSummary})`,
-            total: formatters.formatPrice(freshOrder.total_amount)
-        }).catch(() => {});
     }
 }
 

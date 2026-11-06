@@ -39,6 +39,7 @@ const feedbackScene = require('./bot/scenes/feedbackScene');
 const addCouponScene = require('./bot/scenes/addCouponScene');
 const editOpeningHoursScene = require('./bot/scenes/editOpeningHoursScene');
 const editAbsenceMsgScene = require('./bot/scenes/editAbsenceMsgScene');
+const addShippingMethodScene = require('./bot/scenes/addShippingMethodScene');
 
 const notificationService = require('./services/notificationService');
 const cronService = require('./services/cronService');
@@ -81,7 +82,8 @@ const stage = new Scenes.Stage([
     feedbackScene,
     addCouponScene,
     editOpeningHoursScene,
-    editAbsenceMsgScene
+    editAbsenceMsgScene,
+    addShippingMethodScene
 ]);
 
 bot.use(session());

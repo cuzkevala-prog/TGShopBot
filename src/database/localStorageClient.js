@@ -48,6 +48,8 @@ const TABLE_DEFAULTS = {
         description: null,
         image_url: null,
         price: 0,
+        stock: 0,
+        allowed_payment_methods: [],
         kyc_mode: 'none',
         kyc_options: []
     },
@@ -57,6 +59,12 @@ const TABLE_DEFAULTS = {
         auto_verify: false,
         crypto_symbol: 'BTC',
         method_type: 'crypto'
+    },
+    shipping_methods: {
+        cost: 0,
+        description: null,
+        is_active: true,
+        sort_order: 0
     },
     carts: {
         quantity: 1,
@@ -71,6 +79,8 @@ const TABLE_DEFAULTS = {
         digital_delivery: null,
         payment_method_name: 'Nicht angegeben',
         shipping_link: null,
+        shipping_method_name: null,
+        shipping_cost: 0,
         tx_id: null,
         total_amount: 0,
         crypto_amount: null,
@@ -140,6 +150,24 @@ const INITIAL_DB = {
             auto_verify: false,
             crypto_symbol: null,
             method_type: 'cash'
+        }
+    ],
+    shipping_methods: [
+        {
+            id: 's1a2c3d4-0000-4000-8000-000000000001',
+            name: 'DHL Paket (Standard)',
+            cost: 5.49,
+            description: 'Versicherter Versand mit Sendungsnummer (1-3 Werktage)',
+            is_active: true,
+            sort_order: 1
+        },
+        {
+            id: 's1a2c3d4-0000-4000-8000-000000000002',
+            name: 'DHL Express',
+            cost: 13.99,
+            description: 'Zustellung am nächsten Werktag',
+            is_active: true,
+            sort_order: 2
         }
     ],
     carts: [],

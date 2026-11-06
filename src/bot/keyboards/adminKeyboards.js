@@ -114,13 +114,19 @@ module.exports = {
     },
 
     getEditProductMenu: (product, deliveryLabel, backCb, stockCount = 0) => {
+        const isPhysical = product.delivery_option && product.delivery_option !== 'none';
+        const stockRow = isPhysical
+            ? [{ text: `📦 Vorrat bearbeiten (${product.stock !== null && product.stock !== undefined ? product.stock : 0} Stk.)`, callback_data: `admin_edit_stock_${product.id}`, style: 'primary' }]
+            : [{ text: `🔐 Tresor-Vorrat (${stockCount} verfügbar)`, callback_data: `admin_prod_stock_menu_${product.id}`, style: 'primary' }];
+
         const kb = [
             [
                 { text: product.is_active ? '👻 Deaktivieren' : '✅ Aktivieren', callback_data: `admin_toggle_active_${product.id}`, style: product.is_active ? 'danger' : 'success' },
                 { text: product.is_out_of_stock ? '📦 Verfügbar' : '❌ Ausverkauft', callback_data: `admin_toggle_stock_${product.id}`, style: product.is_out_of_stock ? 'success' : 'danger' }
             ],
-            [{ text: `🔐 Tresor-Vorrat (${stockCount} verfügbar)`, callback_data: `admin_prod_stock_menu_${product.id}`, style: 'primary' }],
-            [{ text: `🚚 Lieferoption: ${deliveryLabel}`, callback_data: `admin_cycle_delivery_${product.id}`, style: 'primary' }]
+            stockRow,
+            [{ text: `🚚 Lieferoption: ${deliveryLabel}`, callback_data: `admin_cycle_delivery_${product.id}`, style: 'primary' }],
+            [{ text: '💳 Zahlungsmethoden anpassen', callback_data: `admin_prod_payments_${product.id}`, style: 'primary' }]
         ];
 
         const opt = product.delivery_option || 'none';

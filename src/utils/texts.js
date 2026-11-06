@@ -41,6 +41,7 @@ module.exports = {
             `💳 Methode: ${data.paymentName}\n`;
         if (data.deliveryMethod === 'shipping') text += `🚚 Lieferung: Versand\n`;
         else if (data.deliveryMethod === 'pickup') text += `🏪 Lieferung: Abholung\n`;
+        if (data.shippingMethodName) text += `🚚 Versandart: ${data.shippingMethodName}${data.shippingCost ? ` (+${parseFloat(data.shippingCost).toFixed(2)}€)` : ''}\n`;
         if (data.shippingLink) text += `📦 Adresse: [Privnote öffnen](${data.shippingLink})\n`;
         
         const isCash = data.isCash || /bar|cash/i.test(data.paymentName);
@@ -81,6 +82,7 @@ module.exports = {
         text += `💳 *Zahlungsart:* ${data.paymentName}\n`;
         if (data.deliveryMethod === 'shipping') text += `🚚 *Lieferung:* Versand\n`;
         else if (data.deliveryMethod === 'pickup') text += `🏪 *Lieferung:* Abholung vor Ort\n`;
+        if (data.shippingMethodName) text += `🚚 *Versandart:* ${data.shippingMethodName}${data.shippingCost ? ` (+${parseFloat(data.shippingCost).toFixed(2)} €)` : ''}\n`;
 
         const isCash = data.isCash || /bar|cash/i.test(data.paymentName);
         if (isCash) {
@@ -317,6 +319,11 @@ module.exports = {
         text += `💰 Preis: ${formattedPrice}\n`;
         text += `📦 Aktiv: ${product.is_active ? '✅' : '❌'}\n`;
         text += `📋 Verfügbar: ${product.is_out_of_stock ? '❌ Ausverkauft' : '✅'}\n`;
+        if (product.delivery_option && product.delivery_option !== 'none') {
+            text += `📦 Physischer Vorrat: ${product.stock !== null && product.stock !== undefined ? product.stock : 0} Stück\n`;
+        }
+        const hasCustomPay = Array.isArray(product.allowed_payment_methods) && product.allowed_payment_methods.length > 0;
+        text += `💳 Zahlungsarten: ${hasCustomPay ? `${product.allowed_payment_methods.length} ausgewählt` : 'Alle aktiv (Standard)'}\n`;
         text += `🚚 Lieferoption: ${deliveryLabel}\n`;
         if (product.delivery_option === 'shipping' || product.delivery_option === 'both') {
             const mode = product.kyc_mode || 'none';
